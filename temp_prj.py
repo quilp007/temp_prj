@@ -1,0 +1,677 @@
+#!/usr/bin/env python
+# coding=utf8
+
+import os, sys, time
+from PyQt5.QtCore import QObject, pyqtSignal, QThread, pyqtSignal, pyqtSlot, QEvent
+from PyQt5.QtWidgets import QApplication, QMainWindow 
+from PyQt5.QtWidgets import *
+from PyQt5 import uic, QtCore
+
+import numpy as np
+import shelve
+from datetime import datetime
+import pandas as pd
+import pyqtgraph as pg
+
+import time
+import serial
+import json
+import pymongo
+
+# ------------------------------------------------------------------------------
+# config -----------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
+ENABLE_MONGODB = True
+server_ip = '211.57.90.83'
+
+userid = 'temp'
+passwd = 'temp!'
+
+mongo_port = 27017
+mqtt_port = 1883
+
+DEVICE_ID = 'temp_db_1'
+
+mongodb_signup_col = None
+mongodb_data_col = None
+
+SAVE_PERIOD = 60 * 2 * 1000   # second
+
+# graph x size
+PLOT_X_SIZE = 720 + 1  # graph's x size
+x_size = 200  # graph's x size
+
+# use global variable!!!!!!!!!!!!!!!
+USE_GLOBAL_VARIABLE = False
+# USE_GLOBAL_VARIABLE = True
+
+RES_REF = 20
+
+P_RES_REF = 20
+P_ERROR_REF = 0.20  # 5%
+P_ERROR_LIMIT = 0.40  # 12.5%
+P_PLOT_MIN_MAX = 0.50  # 15%
+
+ERROR_REF = 0.10  # 5%
+# ERROR_LIMIT = 0.1     # 10%
+ERROR_LIMIT = 0.20  # 12.5%
+PLOT_MIN_MAX = 0.25  # 15%
+
+
+# serial config
+# COM_PORT = 'com4'
+COM_PORT = '/dev/tty.usbmodem141301'
+BAUD_RATE = 9600
+
+# READ_DELAY = 0.01
+READ_DELAY = 0.005
+ENABLE_BLANK_LINE = False
+BLANK_DATA_COUNT = 20
+
+# ------------------------------------------------------------------------------
+# TEST_DATA = True  # if read data from excel
+TEST_DATA = False # if read data from 34461a
+
+if not TEST_DATA:
+    serialDev = serial.Serial(COM_PORT, BAUD_RATE)
+
+form_class = uic.loadUiType('temp_prj.ui')[0]
+
+
+# --------------------------------------------------------------
+# [THREAD] RECEIVE from PLC (receive from PLC)
+# --------------------------------------------------------------
+class THREAD_RECEIVE_Data(QThread):
+    intReady = pyqtSignal(float, float)
+    to_excel = pyqtSignal(str, float)
+
+    @pyqtSlot()
+    def __init__(self):
+        super(THREAD_RECEIVE_Data, self).__init__()
+        self.time_format = '%Y%m%d_%H%M%S'
+
+        self.__suspend = False
+        self.__exit = False
+        self.log_flag = False
+
+        self.temp =15 
+        self.humi =15 
+        self._time = 0
+
+        self.temp_list = []
+        self.humi_list = []
+
+        self.timer_ = QtCore.QTimer()
+        self.timer_.setInterval(SAVE_PERIOD)
+        self.timer_.timeout.connect(self.timeout_func)
+        self.timer_.start()
+
+
+    def timeout_func(self):
+        mongodb_data_col.insert_one({'timestamp': self._time, 'temp': self.temp, 'humi': self.humi})
+
+
+    def run(self):
+        while True:
+            ### Suspend ###
+            while self.__suspend:
+                time.sleep(0.5)
+
+            rawserial = serialDev.readline()
+            cookedserial = rawserial.decode('utf-8').strip('\r\n')
+            try:
+                jsonData = json.loads(cookedserial)
+            except Exception as e:
+                print(f'error: {e}')
+                continue
+
+            print(jsonData)
+            temp = jsonData['Temperature']
+            humi = jsonData['Humidity']
+            print(f'Humidity: {humi}')
+            print('Temperature: ', temp)
+
+            self.temp_list.append(temp)
+            self.humi_list.append(humi)
+
+            self.temp = temp
+            self.humi = humi
+
+            self._time = datetime.now()
+            _time_str = self._time.strftime(self.time_format)
+
+            # read = RES_REF
+            print(f'{_time_str} > temp: {self.temp}  humi: {self.humi}')
+            self.intReady.emit(self.temp, self.humi)
+
+            if self.log_flag:
+                self.to_excel.emit(self._time, read)
+
+            ### Exit ###
+            if self.__exit:
+                break
+
+    def mySuspend(self):
+        self.__suspend = True
+
+    def myResume(self):
+        self.__suspend = False
+
+    def myExit(self):
+        self.__exit = True
+
+    def close(self):
+        self.mySuspend()
+        time.sleep(0.1)
+        self.ks_34461a.close()
+
+class CustomAxis(pg.AxisItem):
+    def __init__(self, *args, **kwargs):
+        super(CustomAxis, self).__init__(*args, **kwargs)
+        # self.tick_labels = {0: '-24', 120: '-20', 240: '-16', 360: '-12', 480: '-8', 600: '-4', 720: '0'}
+        # self.tick_labels = {0: '0', 120: '4', 240: '8', 360: '12', 480: '16', 600: '20', 720: '24'}
+        self.tick_labels = {0: '0', 30: '1', 60: '2', 90: '3', 120: '4', 150: '5', 180: '6', 210: '7', 240: '8', 270: '9', 300: '10', 330: '11',\
+                        360: '12', 390: '13', 420: '14', 450: '15', 480: '16', 510: '17', 540: '18', 570: '19', 600: '20', 630: '21', 660: '22', 690: '23', 720: '24'}
+
+    def tickStrings(self, values, scale, spacing):
+        # values 배열을 역순으로 처리하여 레이블 생성
+        # 예를 들어, 값이 [0, 1, 2, 3, 4]로 들어오면 ['4', '3', '2', '1', '0']로 레이블을 반환
+        # return [str(value) for value in reversed(values)]
+        return [self.tick_labels.get(value, '') for value in values]
+
+class CustomAxis2(pg.AxisItem):
+    def __init__(self, *args, **kwargs):
+        super(CustomAxis2, self).__init__(*args, **kwargs)
+        self.tick_labels = {0: '-12', 60: '-11', 120: '-10', 180: '-9', 240: '-8', 300: '-7', 360: '-6', 420: '-5', 480: '-4', 540: '-3', 600: '-2', 660: '-1', 720: '0'}
+
+    def tickStrings(self, values, scale, spacing):
+        return [self.tick_labels.get(value, '') for value in values]
+
+
+
+class qt(QMainWindow, form_class):
+    def __init__(self):
+        # QMainWindow.__init__(self/conf)
+        # uic.loadUiType('qt_test2.ui', self)[0]
+
+        super().__init__()
+        self.setupUi(self)
+        # self.setWindowFlags(Qt.FramelessWindowHint)
+
+        self.res_ref = self.p_res_ref = 0
+        self.p_error_ref = 0
+        self.p_error_upper = self.p_error_lower = 0
+        self.p_error_limit_upper = self.p_error_limit_lower = 0
+        self.p_plot_upper = self.p_plot_lower = 0
+        self.error_upper = self.error_lower = 0
+        self.error_limit_upper = self.error_limit_lower = 0
+        self.plot_upper = self.plot_lower = 0
+
+        self.loadParam()
+        print('RES_REF: ', RES_REF)
+        self.setParam()
+
+        # lcdNum click event connect to function
+        self.clickable(self.lcdNum_r_ref).connect(lambda: self.input_lcdNum(self.lcdNum_r_ref))         # k ohm
+        self.clickable(self.lcdNum_p_r_ref).connect(lambda: self.input_lcdNum(self.lcdNum_p_r_ref))
+        self.clickable(self.lcdNum_error_ref).connect(lambda: self.input_lcdNum(self.lcdNum_error_ref))
+        self.clickable(self.lcdNum_error_limit).connect(lambda: self.input_lcdNum(self.lcdNum_error_limit))
+        self.clickable(self.label_mode).connect(self.mode_change)
+
+
+        self.btn_start.clicked.connect(lambda: self.btn_34461a(self.btn_start))
+        self.btn_stop.clicked.connect(lambda: self.btn_34461a(self.btn_stop))
+        self.btn_close.clicked.connect(lambda: self.btn_34461a(self.btn_close))
+
+        self.btn_check_data.clicked.connect(self.load_years_set_date)
+
+        self.data = np.linspace(-np.pi, np.pi, x_size)
+        self.y1_1 = np.zeros(len(self.data))
+        self.y1_2 = np.zeros(len(self.data))
+
+        # self.y2_1 = np.sin(self.data)
+        self.y2_1 = [np.nan] * PLOT_X_SIZE
+        self.y2_2 = [np.nan] * PLOT_X_SIZE
+
+        self.y3_1 = [np.nan] * PLOT_X_SIZE
+        self.y3_2 = [np.nan] * PLOT_X_SIZE
+
+        self.db_data_1 = [np.nan] * PLOT_X_SIZE
+        self.db_data_2 = [np.nan] * PLOT_X_SIZE
+
+        #----------------- Humidity Plot
+        axis = CustomAxis(orientation='bottom')
+        self.p6 = self.graphWidget_2.addPlot(title="Humidity", axisItems={'bottom': axis})
+        self.curve1_1 = self.p6.plot(pen='g')
+        self.curve1_2 = self.p6.plot(pen='y')
+
+        self.p6.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+
+        axis = self.p6.getAxis('bottom')  # X 축 객체를 가져옴
+        axis.setTickSpacing(major=30, minor=30)
+        self.p6.showGrid(x=True, y=True, alpha=0.5)
+
+        # self.drawLine(self.p6, self.error_lower, 'y')
+        # self.drawLine(self.p6, self.error_upper, 'y')
+        # self.drawLine(self.p6, self.error_limit_lower, 'r')
+        # self.drawLine(self.p6, self.error_limit_upper, 'r')
+
+        # self.graphWidget.nextRow()
+
+        #----------------- Temperature Plot
+        axis = CustomAxis(orientation='bottom')
+        self.p7 = self.graphWidget.addPlot(title="Temperature", axisItems={'bottom': axis})
+        self.curve2_1 = self.p7.plot(pen='r')
+        self.curve2_2 = self.p7.plot(pen='y')
+
+        self.p7.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+
+        axis = self.p7.getAxis('bottom')  # X 축 객체를 가져옴
+        axis.setTickSpacing(major=30, minor=30)
+        self.p7.showGrid(x=True, y=True, alpha=0.5)
+
+        # self.drawLine(self.p7, self.p_error_lower, 'y')
+        # self.drawLine(self.p7, self.p_error_upper, 'y')
+        # self.drawLine(self.p7, self.p_error_limit_lower, 'r')
+        # self.drawLine(self.p7, self.p_error_limit_upper, 'r')
+
+        #----------------- DB data -> Temperature Plot
+        axis = CustomAxis(orientation='bottom')
+        self.db_plot_1 = self.graphWidget_4.addPlot(title="DB Temperature", axisItems={'bottom': axis})
+        self.curve_db_1_1 = self.db_plot_1.plot(pen='r')
+        self.curve_db_1_2 = self.db_plot_1.plot(pen='y')
+
+        self.db_plot_1.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+
+        axis = self.db_plot_1.getAxis('bottom')  # X 축 객체를 가져옴
+        axis.setTickSpacing(major=30, minor=30)
+        self.db_plot_1.showGrid(x=True, y=True, alpha=0.5)
+
+        #----------------- DB data -> Humidity Plot
+        axis = CustomAxis(orientation='bottom')
+        self.db_plot_2 = self.graphWidget_5.addPlot(title="DB Humidity", axisItems={'bottom': axis})
+        self.curve_db_2_1 = self.db_plot_2.plot(pen='g')
+        self.curve_db_2_2 = self.db_plot_2.plot(pen='y')
+
+        self.db_plot_2.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+
+        axis = self.db_plot_2.getAxis('bottom')  # X 축 객체를 가져옴
+        axis.setTickSpacing(major=30, minor=30)
+        self.db_plot_2.showGrid(x=True, y=True, alpha=0.5)
+
+
+        # DEBUG GRAPH
+        axis = CustomAxis2(orientation='bottom')
+        self.p8 = self.graphWidget_3.addPlot(title="DEBUG", axisItems={'bottom': axis})
+        self.curve3_1 = self.p8.plot(pen='r')
+        self.curve3_2 = self.p8.plot(pen='g')
+
+        self.p8.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+        axis = self.p8.getAxis('bottom')  # X 축 객체를 가져옴
+        # axis.setTickSpacing(major=120, minor=60)
+        axis.setTickSpacing(major=60, minor=60)
+        self.p8.showGrid(x=True, y=True, alpha=0.5)
+
+        # self.p8.setGeometry(0, 0, 720, 5)
+
+        # self.drawLine(self.p8, self.error_lower, 'y')
+        # self.drawLine(self.p8, self.error_upper, 'y')
+        # self.drawLine(self.p8, self.error_limit_lower, 'r')
+        # self.drawLine(self.p8, self.error_limit_upper, 'r')
+
+
+        self.thread_rcv_data = THREAD_RECEIVE_Data()
+        self.thread_rcv_data.intReady.connect(self.update_func)
+        self.thread_rcv_data.to_excel.connect(self.to_excel_func)
+        self.thread_rcv_data.start()
+
+        self.resist_data = []
+        # self.writer = pd.ExcelWriter('./data.xlsx')
+
+        self.log_flag = False
+
+        self.measure_mode = True    # resistance mode
+
+        self.comboBox_year.activated.connect(self.update_month_combobox)
+        self.comboBox_month.activated.connect(self.update_day_combobox)
+        self.comboBox_day.activated.connect(self.check_data)
+
+        # self.comboBox_year.activated.connect(self.check_data)
+        self.load_years_set_date()
+
+        self.tabWidget.setTabVisible(2, False)
+
+
+    def setParam(self):
+        self.res_ref    = RES_REF
+        self.p_res_ref  = P_RES_REF
+
+        self.p_error_upper = self.p_res_ref + self.p_res_ref * P_ERROR_REF  # + 5%
+        self.p_error_lower = self.p_res_ref - self.p_res_ref * P_ERROR_REF  # - 5%
+
+        self.p_error_limit_upper = self.p_res_ref + self.p_res_ref * P_ERROR_LIMIT  # + 10%
+        self.p_error_limit_lower = self.p_res_ref - self.p_res_ref * P_ERROR_LIMIT  # - 10%
+
+        self.p_plot_upper = self.p_res_ref + self.p_res_ref * P_PLOT_MIN_MAX  # + 15%
+        self.p_plot_lower = self.p_res_ref - self.p_res_ref * P_PLOT_MIN_MAX  # - 15%
+
+        self.error_upper = self.res_ref + self.res_ref * ERROR_REF  # + 5%
+        self.error_lower = self.res_ref - self.res_ref * ERROR_REF  # - 5%
+
+        self.error_limit_upper = self.res_ref + self.res_ref * ERROR_LIMIT  # + 10%
+        self.error_limit_lower = self.res_ref - self.res_ref * ERROR_LIMIT  # - 10%
+
+        self.plot_upper = self.res_ref + self.res_ref * PLOT_MIN_MAX  # + 15%
+        self.plot_lower = self.res_ref - self.res_ref * PLOT_MIN_MAX  # - 15%
+
+
+    def loadParam(self):
+        global RES_REF, P_RES_REF, ERROR_REF, ERROR_LIMIT, P_ERROR_REF, P_ERROR_LIMIT
+        if not USE_GLOBAL_VARIABLE:
+            try:
+                with shelve.open('config') as f:
+                    RES_REF = int(f['r_ref'])*1000
+                    P_RES_REF = int(f['p_r_ref'])
+                    ERROR_REF = int(f['error_ref'])/100     # 1st line
+                    ERROR_LIMIT = int(f['error_limit'])/100 # 2nd line
+
+                    P_ERROR_REF = ERROR_REF
+                    P_ERROR_LIMIT = ERROR_LIMIT
+            except Exception as e:
+                print('exception: ', e)
+
+        self.lcdNum_r_ref.display(RES_REF/1000)
+        self.lcdNum_p_r_ref.display(P_RES_REF)
+        self.lcdNum_error_ref.display(ERROR_REF*100)
+        self.lcdNum_error_limit.display(ERROR_LIMIT*100)
+
+
+    def clickable(self, widget):
+        class Filter(QObject):
+            clicked = pyqtSignal()  # pyside2 사용자는 pyqtSignal() -> Signal()로 변경
+
+            def eventFilter(self, obj, event):
+
+                if obj == widget:
+                    if event.type() == QEvent.MouseButtonRelease:
+                        if obj.rect().contains(event.pos()):
+                            self.clicked.emit()
+                            # The developer can opt for .emit(obj) to get the object within the slot.
+                            return True
+                return False
+        filter = Filter(widget)
+        widget.installEventFilter(filter)
+        return filter.clicked
+
+
+    def save_var(self, key, value):
+        with shelve.open('config.db') as f:
+            f[key] = value
+
+
+    def mode_change(self):
+        item = ('Resistance', 'Current')
+        text, ok = QInputDialog.getItem(self, 'MODE', 'select Mode', item, 0, False)
+        if ok:
+            if text == 'Resistance':
+                self.measure_mode = True
+            else:
+                self.measure_mode = False
+
+            self.label_mode.setText(text)
+
+
+    def input_lcdNum(self, lcdNum):
+        global ERROR_REF, ERROR_LIMIT, RES_REF, P_RES_REF
+        text, ok = QInputDialog.getInt(self, 'input', 'input number')
+        if ok:
+            if lcdNum == self.lcdNum_r_ref:
+                RES_REF = text
+                self.save_var('r_ref', text)
+            elif lcdNum == self.lcdNum_p_r_ref:
+                P_RES_REF = text
+                self.save_var('p_r_ref', text)
+            elif lcdNum == self.lcdNum_error_ref:
+                ERROR_REF = text
+                self.save_var('error_ref', text)
+            elif lcdNum == self.lcdNum_error_limit:
+                ERROR_LIMIT = text
+                self.save_var('error_limit', text)
+
+            lcdNum.display(text)
+
+
+    def drawLine(self, plot_name, val, color):
+        line = pg.InfiniteLine(angle=0, movable=True, pen=color)
+        line.setValue(val)
+        plot_name.addItem(line, ignoreBounds=True)
+
+
+    def to_excel_func(self, _time, data):
+        tt = [_time, data]
+        self.resist_data.append(tt)
+        print(tt)
+
+
+    def insert_log(self, temp, humi):
+        time_text = time.strftime('%y.%m.%d_%H:%M:%S', time.localtime(time.time()))
+        log_text = time_text + '   ' + str(temp) + '°C' + '   ' + str(humi) + '%'
+        self.textEdit_log.append(log_text)
+
+
+    def update_func(self, temp, humi):
+        if temp > 100: temp = 100
+        elif temp < 0: temp = 0
+
+        self.mean_value_plot(temp, humi)
+
+        # self.y3_1[0] = temp
+        self.y3_1[-1] = temp
+        self.curve3_1.setData(self.y3_1)
+        self.y3_1 = np.roll(self.y3_1, -1)
+
+        self.y3_2[-1] = humi
+        self.curve3_2.setData(self.y3_2)
+        self.y3_2 = np.roll(self.y3_2, -1)
+
+        self.insert_log(temp, humi)
+
+        self.lcdNum_TEMP.display("{:.1f}".format(temp))
+        self.lcdNum_HUMI.display("{:.1f}".format(humi))
+
+
+    def mean_value_plot(self, temp_value, humi_value):
+        hour = datetime.now().hour
+        min = datetime.now().minute
+
+        position = int(hour * 30 + min / 2)
+
+        self.y2_1[position] = temp_value
+        self.curve2_1.setData(self.y2_1)
+        # self.y2_1 = np.roll(self.y2_1, -1)
+
+        self.y2_2[position] = humi_value
+        self.curve1_1.setData(self.y2_2)
+        # self.y2_2 = np.roll(self.y2_2, -1)
+
+    # MongoDB에서 년도, 월, 날짜 데이터 추출
+    def get_date_data(self):
+        pipeline = [
+            {
+                "$group": {
+                    "_id": {
+                        "year": {"$year": "$timestamp"},
+                        "month": {"$month": "$timestamp"},
+                        "day": {"$dayOfMonth": "$timestamp"}
+                    }
+                }
+            },
+            {"$sort": {"_id": 1}}
+        ]
+        return list(mongodb_data_col.aggregate(pipeline))
+
+    def data_to_plot(self, data, key, curve_db):
+        db_data = [np.nan] * PLOT_X_SIZE
+        for item in data:
+            #print(item['timestamp'], item[key])
+            tt = item[key]
+            hour = item['timestamp'].hour
+            min = item['timestamp'].minute
+            
+            position = int(hour * 30 + min / 2)
+            db_data[position] = tt
+            # print(key, tt)
+
+        curve_db.setData(db_data)
+
+
+    def load_years_set_date(self):
+        max_value = 0
+        self.comboBox_year.clear()
+        # 년도 데이터 추출
+        pipeline = [
+            {"$group": {"_id": {"year": {"$year": "$timestamp"}}}},
+            {"$sort": {"_id.year": 1}}
+        ]
+        years = mongodb_data_col.aggregate(pipeline)
+
+        for year in years:
+            max_value = max(max_value, year['_id']['year'])
+            self.comboBox_year.addItem(str(year['_id']['year']), year['_id']['year'])
+
+        # set recent year
+        self.comboBox_year.setCurrentText(str(max_value))
+
+        # set recent month
+        max_value = self.update_month_combobox()
+        self.comboBox_month.setCurrentText(str(max_value))
+
+        # set recent day
+        max_value = self.update_day_combobox()
+        self.comboBox_day.setCurrentText(str(max_value))
+
+        self.check_data()
+
+
+    def update_month_combobox(self):
+        max_value = 0
+        self.comboBox_month.clear()
+        selected_year = self.comboBox_year.currentData()
+
+        # 선택된 년도에 해당하는 월 데이터를 조회
+        pipeline = [
+            {"$match": {"$expr": {"$eq": [{"$year": "$timestamp"}, selected_year]}}},
+            {"$group": {"_id": {"month": {"$month": "$timestamp"}}}},
+            {"$sort": {"_id.month": 1}}
+        ]
+        months = mongodb_data_col.aggregate(pipeline)
+
+        for month in months:
+            max_value = max(max_value, month['_id']['month'])
+            self.comboBox_month.addItem(str(month['_id']['month']), month['_id']['month'])
+
+        return max_value
+
+    def update_day_combobox(self):
+        max_value = 0
+        self.comboBox_day.clear()
+        selected_year = self.comboBox_year.currentData()
+        selected_month = self.comboBox_month.currentData()
+
+        # 선택된 년도와 월에 해당하는 일 데이터를 조회
+        pipeline = [
+            {"$match": {
+                "$and": [
+                    {"$expr": {"$eq": [{"$year": "$timestamp"}, selected_year]}},
+                    {"$expr": {"$eq": [{"$month": "$timestamp"}, selected_month]}}
+                ]
+            }},
+            {"$group": {"_id": {"day": {"$dayOfMonth": "$timestamp"}}}},
+            {"$sort": {"_id.day": 1}}
+        ]
+        days = mongodb_data_col.aggregate(pipeline)
+
+        for day in days:
+            max_value = max(max_value, day['_id']['day'])
+            self.comboBox_day.addItem(str(day['_id']['day']), day['_id']['day'])
+
+        return max_value
+
+
+    def check_data(self):
+        # start_date = datetime(2024, 4, 7)
+        # end_date = datetime(2024, 4, 8)
+
+        year    = self.comboBox_year.currentData()
+        month   = self.comboBox_month.currentData()
+        day     = self.comboBox_day.currentData()
+
+        start_date = datetime(year, month, day)
+        end_date = datetime(year, month, day+1)
+        
+        results = mongodb_data_col.find({
+            'timestamp': {  # 'timestamp'는 날짜 및 시간 데이터를 저장하는 필드의 이름입니다.
+                '$gte': start_date,
+                '$lt': end_date
+            }
+        })
+        # self.db_data_1 = [np.nan] * PLOT_X_SIZE
+        self.data_to_plot(results, 'temp', self.curve_db_1_1)
+
+        results = mongodb_data_col.find({
+            'timestamp': {  # 'timestamp'는 날짜 및 시간 데이터를 저장하는 필드의 이름입니다.
+                '$gte': start_date,
+                '$lt': end_date
+            }
+        })
+        # self.db_data_2 = [np.nan] * PLOT_X_SIZE
+        self.data_to_plot(results, 'humi', self.curve_db_2_1)
+
+
+    def btn_34461a(self, button):
+        if button == self.btn_start:
+            self.thread_rcv_data.myResume()
+            self.thread_rcv_data.log_flag = True
+        elif button == self.btn_stop:
+            self.thread_rcv_data.log_flag = False
+            # self.thread_rcv_data.mySuspend()
+            df1 = pd.DataFrame(self.resist_data)
+            _time = datetime.now()
+            _time = _time.strftime(self.thread_rcv_data.time_format)
+
+            with pd.ExcelWriter(_time + '.xlsx') as writer:
+                df1.to_excel(writer, _time + '.xlsx')
+
+            self.resist_data = []
+
+        elif button == self.btn_close:
+            self.thread_rcv_data.close()
+
+
+def initMongoDB():
+    global mongodb_signup_col
+    global mongodb_data_col
+
+    if ENABLE_MONGODB:
+        conn = pymongo.MongoClient('mongodb://' + server_ip,
+                                   username=userid,
+                                   password=passwd)
+                                   # authSource=DEVICE_ID)
+
+        db = conn.get_database(DEVICE_ID)
+        mongodb_signup_col = db.get_collection('signup')
+        mongodb_data_col = db.get_collection('data')
+
+
+def run():
+    app = QApplication(sys.argv)
+    widget = qt()
+    widget.show()
+
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    initMongoDB()
+    run()
