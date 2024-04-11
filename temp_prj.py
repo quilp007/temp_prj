@@ -63,6 +63,8 @@ HUMI_PLOT_LOWER = 0
 COM_PORT = '/dev/tty.usbmodem141301'
 BAUD_RATE = 9600
 
+NUM_OF_GRAPH_ROW    = 2
+NUM_OF_GRAPH_COLUMN = 4
 
 # ------------------------------------------------------------------------------
 # TEST_DATA = True  # if read data from excel
@@ -186,7 +188,6 @@ class CustomAxis2(pg.AxisItem):
         return [self.tick_labels.get(value, '') for value in values]
 
 
-
 class qt(QMainWindow, form_class):
     def __init__(self):
         # QMainWindow.__init__(self/conf)
@@ -222,14 +223,13 @@ class qt(QMainWindow, form_class):
         self.y3_1 = [np.nan] * PLOT_X_SIZE
         self.y3_2 = [np.nan] * PLOT_X_SIZE
 
-        self.db_data_1 = [np.nan] * PLOT_X_SIZE
-        self.db_data_2 = [np.nan] * PLOT_X_SIZE
-
         # self.curve = np.zeros((2, 3, 2)) 
         # 2x3x2 크기의 리스트 초기화
-        self.curve = [[[None for _ in range(2)] for _ in range(3)] for _ in range(2)]
+        self.curve = [[[None for _ in range(NUM_OF_GRAPH_ROW)] for _ in range(NUM_OF_GRAPH_COLUMN)] for _ in range(2)]
 
         self.current_row = 0
+        
+        self.CLEAR_FLAG = False
 
         #----------------- Humidity Plot
         axis = CustomAxis(orientation='bottom')
@@ -295,7 +295,7 @@ class qt(QMainWindow, form_class):
 
         #----------------- PC Main graphWidget
         for idx, db_name in enumerate(mongodb_list):
-            self.add_plot(db_name, int(idx/3), int(idx%3))
+            self.add_plot(db_name, int(idx/NUM_OF_GRAPH_COLUMN), int(idx%NUM_OF_GRAPH_COLUMN))
         #----------------- PC Main graphWidget
 
         # for idx in range(2, 6):
@@ -482,10 +482,6 @@ class qt(QMainWindow, form_class):
 
         self.mean_value_plot(temp, humi)
 
-        # self.y3_1[-1] = temp
-        # self.curve3_1.setData(self.y3_1)
-        # self.y3_1 = np.roll(self.y3_1, -1)
-
         symbolSizes = [1] * len(self.y3_1)  # 과거 데이터 점 크기
         symbolSizes[-1] = 7 # 현재 데이터 점 크기
 
@@ -507,6 +503,18 @@ class qt(QMainWindow, form_class):
         hour = datetime.now().hour
         min = datetime.now().minute
 
+        if hour == 0:
+            if min < 1 and self.CLEAR_FLAG == False:
+                self.y2_1 = [np.nan] * PLOT_X_SIZE
+                self.y2_2 = [np.nan] * PLOT_X_SIZE
+
+                self.CLEAR_FLAG = True
+
+            if min == 1:
+                self.CLEAR_FLAG = False
+
+
+
         position = int(hour * 30 + min / 2)
 
         symbolSizes = [1] * len(self.y3_1)  # 과거 데이터 점 크기
@@ -514,11 +522,9 @@ class qt(QMainWindow, form_class):
 
         self.y2_1[position] = temp_value
         self.curve2_1.setData(self.y2_1, symbol='o', symbolSize=symbolSizes, symbolBrush=('r'))
-        # self.y2_1 = np.roll(self.y2_1, -1)
 
         self.y2_2[position] = humi_value
         self.curve1_1.setData(self.y2_2, symbol='o', symbolSize=symbolSizes, symbolBrush=('g'))
-        # self.y2_2 = np.roll(self.y2_2, -1)
 
 
     def data_to_plot(self, data, key, curve_db):
@@ -643,10 +649,7 @@ class qt(QMainWindow, form_class):
             }
         }))
         self.data_to_plot(results, 'temp', self.curve_db_1_1)
-        # self.data_to_plot(results, 'temp', self.curve[0][0][0])
-
         self.data_to_plot(results, 'humi', self.curve_db_2_1)
-        # self.data_to_plot(results, 'humi', self.curve[0][0][1])
 
 
     def check_data_main(self):
@@ -663,8 +666,8 @@ class qt(QMainWindow, form_class):
                     '$lt': end_date
                 }
             }))
-            self.data_to_plot(results, 'temp', self.curve[int(idx/3)][int(idx%3)][0])
-            self.data_to_plot(results, 'humi', self.curve[int(idx/3)][int(idx%3)][1])
+            self.data_to_plot(results, 'temp', self.curve[int(idx/NUM_OF_GRAPH_COLUMN)][int(idx%NUM_OF_GRAPH_COLUMN)][0])
+            self.data_to_plot(results, 'humi', self.curve[int(idx/NUM_OF_GRAPH_COLUMN)][int(idx%NUM_OF_GRAPH_COLUMN)][1])
 
 
     def btn_34461a(self, button):
