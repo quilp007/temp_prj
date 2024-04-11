@@ -33,8 +33,13 @@ mqtt_port = 1883
 
 DEVICE_ID = 'temp_db_1'
 
+DEBUG_MODE = True
+PC_MODE = True
+
 mongodb_signup_col = None
 mongodb_data_col = None
+mongodb_list = None
+mongodb_dict = {}
 
 SAVE_PERIOD = 60 * 2 * 1000   # second
 
@@ -46,17 +51,11 @@ x_size = 200  # graph's x size
 USE_GLOBAL_VARIABLE = False
 # USE_GLOBAL_VARIABLE = True
 
-RES_REF = 20
+TEMP_PLOT_UPPER = 30 
+TEMP_PLOT_LOWER = 15 
 
-P_RES_REF = 20
-P_ERROR_REF = 0.20  # 5%
-P_ERROR_LIMIT = 0.40  # 12.5%
-P_PLOT_MIN_MAX = 0.50  # 15%
-
-ERROR_REF = 0.10  # 5%
-# ERROR_LIMIT = 0.1     # 10%
-ERROR_LIMIT = 0.20  # 12.5%
-PLOT_MIN_MAX = 0.25  # 15%
+HUMI_PLOT_UPPER = 40
+HUMI_PLOT_LOWER = 0 
 
 
 # serial config
@@ -64,10 +63,6 @@ PLOT_MIN_MAX = 0.25  # 15%
 COM_PORT = '/dev/tty.usbmodem141301'
 BAUD_RATE = 9600
 
-# READ_DELAY = 0.01
-READ_DELAY = 0.005
-ENABLE_BLANK_LINE = False
-BLANK_DATA_COUNT = 20
 
 # ------------------------------------------------------------------------------
 # TEST_DATA = True  # if read data from excel
@@ -85,6 +80,7 @@ form_class = uic.loadUiType('temp_prj.ui')[0]
 class THREAD_RECEIVE_Data(QThread):
     intReady = pyqtSignal(float, float)
     to_excel = pyqtSignal(str, float)
+    intPlot  = pyqtSignal()
 
     @pyqtSlot()
     def __init__(self):
@@ -110,6 +106,7 @@ class THREAD_RECEIVE_Data(QThread):
 
     def timeout_func(self):
         mongodb_data_col.insert_one({'timestamp': self._time, 'temp': self.temp, 'humi': self.humi})
+        self.intPlot.emit()
 
 
     def run(self):
@@ -199,18 +196,7 @@ class qt(QMainWindow, form_class):
         self.setupUi(self)
         # self.setWindowFlags(Qt.FramelessWindowHint)
 
-        self.res_ref = self.p_res_ref = 0
-        self.p_error_ref = 0
-        self.p_error_upper = self.p_error_lower = 0
-        self.p_error_limit_upper = self.p_error_limit_lower = 0
-        self.p_plot_upper = self.p_plot_lower = 0
-        self.error_upper = self.error_lower = 0
-        self.error_limit_upper = self.error_limit_lower = 0
-        self.plot_upper = self.plot_lower = 0
-
-        self.loadParam()
-        print('RES_REF: ', RES_REF)
-        self.setParam()
+        # self.loadParam()
 
         # lcdNum click event connect to function
         self.clickable(self.lcdNum_r_ref).connect(lambda: self.input_lcdNum(self.lcdNum_r_ref))         # k ohm
@@ -219,12 +205,11 @@ class qt(QMainWindow, form_class):
         self.clickable(self.lcdNum_error_limit).connect(lambda: self.input_lcdNum(self.lcdNum_error_limit))
         self.clickable(self.label_mode).connect(self.mode_change)
 
-
         self.btn_start.clicked.connect(lambda: self.btn_34461a(self.btn_start))
         self.btn_stop.clicked.connect(lambda: self.btn_34461a(self.btn_stop))
         self.btn_close.clicked.connect(lambda: self.btn_34461a(self.btn_close))
 
-        self.btn_check_data.clicked.connect(self.load_years_set_date)
+        self.btn_check_data.clicked.connect(self.check_data)
 
         self.data = np.linspace(-np.pi, np.pi, x_size)
         self.y1_1 = np.zeros(len(self.data))
@@ -240,22 +225,23 @@ class qt(QMainWindow, form_class):
         self.db_data_1 = [np.nan] * PLOT_X_SIZE
         self.db_data_2 = [np.nan] * PLOT_X_SIZE
 
+        # self.curve = np.zeros((2, 3, 2)) 
+        # 2x3x2 크기의 리스트 초기화
+        self.curve = [[[None for _ in range(2)] for _ in range(3)] for _ in range(2)]
+
+        self.current_row = 0
+
         #----------------- Humidity Plot
         axis = CustomAxis(orientation='bottom')
         self.p6 = self.graphWidget_2.addPlot(title="Humidity", axisItems={'bottom': axis})
         self.curve1_1 = self.p6.plot(pen='g')
         self.curve1_2 = self.p6.plot(pen='y')
 
-        self.p6.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+        self.p6.setYRange(HUMI_PLOT_UPPER, HUMI_PLOT_LOWER, padding=0)
 
         axis = self.p6.getAxis('bottom')  # X 축 객체를 가져옴
         axis.setTickSpacing(major=30, minor=30)
         self.p6.showGrid(x=True, y=True, alpha=0.5)
-
-        # self.drawLine(self.p6, self.error_lower, 'y')
-        # self.drawLine(self.p6, self.error_upper, 'y')
-        # self.drawLine(self.p6, self.error_limit_lower, 'r')
-        # self.drawLine(self.p6, self.error_limit_upper, 'r')
 
         # self.graphWidget.nextRow()
 
@@ -265,16 +251,11 @@ class qt(QMainWindow, form_class):
         self.curve2_1 = self.p7.plot(pen='r')
         self.curve2_2 = self.p7.plot(pen='y')
 
-        self.p7.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+        self.p7.setYRange(TEMP_PLOT_UPPER, TEMP_PLOT_LOWER, padding=0)
 
         axis = self.p7.getAxis('bottom')  # X 축 객체를 가져옴
         axis.setTickSpacing(major=30, minor=30)
         self.p7.showGrid(x=True, y=True, alpha=0.5)
-
-        # self.drawLine(self.p7, self.p_error_lower, 'y')
-        # self.drawLine(self.p7, self.p_error_upper, 'y')
-        # self.drawLine(self.p7, self.p_error_limit_lower, 'r')
-        # self.drawLine(self.p7, self.p_error_limit_upper, 'r')
 
         #----------------- DB data -> Temperature Plot
         axis = CustomAxis(orientation='bottom')
@@ -282,7 +263,7 @@ class qt(QMainWindow, form_class):
         self.curve_db_1_1 = self.db_plot_1.plot(pen='r')
         self.curve_db_1_2 = self.db_plot_1.plot(pen='y')
 
-        self.db_plot_1.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+        self.db_plot_1.setYRange(TEMP_PLOT_UPPER, TEMP_PLOT_LOWER, padding=0)
 
         axis = self.db_plot_1.getAxis('bottom')  # X 축 객체를 가져옴
         axis.setTickSpacing(major=30, minor=30)
@@ -294,35 +275,54 @@ class qt(QMainWindow, form_class):
         self.curve_db_2_1 = self.db_plot_2.plot(pen='g')
         self.curve_db_2_2 = self.db_plot_2.plot(pen='y')
 
-        self.db_plot_2.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+        self.db_plot_2.setYRange(HUMI_PLOT_UPPER, HUMI_PLOT_LOWER, padding=0)
 
         axis = self.db_plot_2.getAxis('bottom')  # X 축 객체를 가져옴
         axis.setTickSpacing(major=30, minor=30)
         self.db_plot_2.showGrid(x=True, y=True, alpha=0.5)
 
-
         # DEBUG GRAPH
         axis = CustomAxis2(orientation='bottom')
-        self.p8 = self.graphWidget_3.addPlot(title="DEBUG", axisItems={'bottom': axis})
+        self.p8 = self.graphWidget_3.addPlot(title=DEVICE_ID, axisItems={'bottom': axis})
         self.curve3_1 = self.p8.plot(pen='r')
         self.curve3_2 = self.p8.plot(pen='g')
 
-        self.p8.setYRange(self.p_plot_upper, self.p_plot_lower, padding=0)
+        self.p8.setYRange(TEMP_PLOT_UPPER, HUMI_PLOT_LOWER, padding=0)
         axis = self.p8.getAxis('bottom')  # X 축 객체를 가져옴
         # axis.setTickSpacing(major=120, minor=60)
         axis.setTickSpacing(major=60, minor=60)
         self.p8.showGrid(x=True, y=True, alpha=0.5)
 
-        # self.p8.setGeometry(0, 0, 720, 5)
+        #----------------- PC Main graphWidget
+        for idx, db_name in enumerate(mongodb_list):
+            self.add_plot(db_name, int(idx/3), int(idx%3))
+        #----------------- PC Main graphWidget
 
-        # self.drawLine(self.p8, self.error_lower, 'y')
-        # self.drawLine(self.p8, self.error_upper, 'y')
-        # self.drawLine(self.p8, self.error_limit_lower, 'r')
-        # self.drawLine(self.p8, self.error_limit_upper, 'r')
+        # for idx in range(2, 6):
+        #     db_name = 'test' + str(idx + 1)
+        #     self.add_plot(db_name, int(idx/3), int(idx%3))
+
+        # for idx in range(0, 6):
+        #     r = int(idx/3) 
+        #     c = int(idx%3)
+
+        #     if self.current_row != r:
+        #         self.gW_pc_1.nextRow()
+
+        #     if idx < len(mongodb_list):
+        #         db_name = mongodb_list[idx]
+        #         self.add_plot(db_name, r, c)
+        #     else:
+        #         # self.gW_pc_1.addItem(pg.GraphicsLayout(), r, c)
+        #         db_name = 'test' + str(idx + 1)
+        #         self.add_plot(db_name, r, c)
+
+        #     self.current_row = r
 
 
         self.thread_rcv_data = THREAD_RECEIVE_Data()
         self.thread_rcv_data.intReady.connect(self.update_func)
+        self.thread_rcv_data.intPlot.connect(self.check_data_main)
         self.thread_rcv_data.to_excel.connect(self.to_excel_func)
         self.thread_rcv_data.start()
 
@@ -333,37 +333,53 @@ class qt(QMainWindow, form_class):
 
         self.measure_mode = True    # resistance mode
 
+        self.label_device.setText(DEVICE_ID)
+
         self.comboBox_year.activated.connect(self.update_month_combobox)
         self.comboBox_month.activated.connect(self.update_day_combobox)
         self.comboBox_day.activated.connect(self.check_data)
+        self.comboBox_db.activated.connect(self.load_years_set_date)
 
-        # self.comboBox_year.activated.connect(self.check_data)
+        for item in mongodb_list:
+            self.comboBox_db.addItem(item, item)
+        self.comboBox_db.setCurrentIndex(0)
+
         self.load_years_set_date()
 
-        self.tabWidget.setTabVisible(2, False)
+        self.tabWidget.setTabVisible(5, False)
+        if PC_MODE:
+            self.tabWidget.setTabVisible(0, False)
+            self.tabWidget.setTabVisible(3, False)
+            self.tabWidget.setTabVisible(4, False)
+        else:
+            self.tabWidget.setTabVisible(1, False)
+            self.tabWidget.setTabVisible(2, False)
 
+        if DEBUG_MODE:
+            self.tabWidget.setTabVisible(0, True)
+            self.tabWidget.setTabVisible(1, True)
+            self.tabWidget.setTabVisible(2, True)
+            self.tabWidget.setTabVisible(3, True)
+            self.tabWidget.setTabVisible(4, True)
 
-    def setParam(self):
-        self.res_ref    = RES_REF
-        self.p_res_ref  = P_RES_REF
+        self.check_data_main()
 
-        self.p_error_upper = self.p_res_ref + self.p_res_ref * P_ERROR_REF  # + 5%
-        self.p_error_lower = self.p_res_ref - self.p_res_ref * P_ERROR_REF  # - 5%
+    def add_plot(self, pTitle, row, col):
+        # if self.current_row != row:
+        #     self.gW_pc_1.nextRow()
 
-        self.p_error_limit_upper = self.p_res_ref + self.p_res_ref * P_ERROR_LIMIT  # + 10%
-        self.p_error_limit_lower = self.p_res_ref - self.p_res_ref * P_ERROR_LIMIT  # - 10%
+        axis = CustomAxis(orientation='bottom')
+        self.plot = self.gW_pc_1.addPlot(title=pTitle, axisItems={'bottom': axis}, row = row, col = col)
+        self.curve[row][col][0] = self.plot.plot(pen='r')
+        self.curve[row][col][1] = self.plot.plot(pen='g')
 
-        self.p_plot_upper = self.p_res_ref + self.p_res_ref * P_PLOT_MIN_MAX  # + 15%
-        self.p_plot_lower = self.p_res_ref - self.p_res_ref * P_PLOT_MIN_MAX  # - 15%
+        self.plot.setYRange(TEMP_PLOT_UPPER, HUMI_PLOT_LOWER, padding=0)
 
-        self.error_upper = self.res_ref + self.res_ref * ERROR_REF  # + 5%
-        self.error_lower = self.res_ref - self.res_ref * ERROR_REF  # - 5%
+        axis = self.plot.getAxis('bottom')  # X 축 객체를 가져옴
+        axis.setTickSpacing(major=120, minor=30)
+        self.plot.showGrid(x=True, y=True, alpha=0.5)
 
-        self.error_limit_upper = self.res_ref + self.res_ref * ERROR_LIMIT  # + 10%
-        self.error_limit_lower = self.res_ref - self.res_ref * ERROR_LIMIT  # - 10%
-
-        self.plot_upper = self.res_ref + self.res_ref * PLOT_MIN_MAX  # + 15%
-        self.plot_lower = self.res_ref - self.res_ref * PLOT_MIN_MAX  # - 15%
+        # self.current_row = row
 
 
     def loadParam(self):
@@ -466,13 +482,19 @@ class qt(QMainWindow, form_class):
 
         self.mean_value_plot(temp, humi)
 
-        # self.y3_1[0] = temp
+        # self.y3_1[-1] = temp
+        # self.curve3_1.setData(self.y3_1)
+        # self.y3_1 = np.roll(self.y3_1, -1)
+
+        symbolSizes = [1] * len(self.y3_1)  # 과거 데이터 점 크기
+        symbolSizes[-1] = 7 # 현재 데이터 점 크기
+
         self.y3_1[-1] = temp
-        self.curve3_1.setData(self.y3_1)
+        self.curve3_1.setData(self.y3_1, symbol='o', symbolSize=symbolSizes, symbolBrush=('r'))
         self.y3_1 = np.roll(self.y3_1, -1)
 
         self.y3_2[-1] = humi
-        self.curve3_2.setData(self.y3_2)
+        self.curve3_2.setData(self.y3_2, symbol='o', symbolSize=symbolSizes, symbolBrush=('g'))
         self.y3_2 = np.roll(self.y3_2, -1)
 
         self.insert_log(temp, humi)
@@ -487,29 +509,17 @@ class qt(QMainWindow, form_class):
 
         position = int(hour * 30 + min / 2)
 
+        symbolSizes = [1] * len(self.y3_1)  # 과거 데이터 점 크기
+        symbolSizes[position] = 7 # 현재 데이터 점 크기
+
         self.y2_1[position] = temp_value
-        self.curve2_1.setData(self.y2_1)
+        self.curve2_1.setData(self.y2_1, symbol='o', symbolSize=symbolSizes, symbolBrush=('r'))
         # self.y2_1 = np.roll(self.y2_1, -1)
 
         self.y2_2[position] = humi_value
-        self.curve1_1.setData(self.y2_2)
+        self.curve1_1.setData(self.y2_2, symbol='o', symbolSize=symbolSizes, symbolBrush=('g'))
         # self.y2_2 = np.roll(self.y2_2, -1)
 
-    # MongoDB에서 년도, 월, 날짜 데이터 추출
-    def get_date_data(self):
-        pipeline = [
-            {
-                "$group": {
-                    "_id": {
-                        "year": {"$year": "$timestamp"},
-                        "month": {"$month": "$timestamp"},
-                        "day": {"$dayOfMonth": "$timestamp"}
-                    }
-                }
-            },
-            {"$sort": {"_id": 1}}
-        ]
-        return list(mongodb_data_col.aggregate(pipeline))
 
     def data_to_plot(self, data, key, curve_db):
         db_data = [np.nan] * PLOT_X_SIZE
@@ -527,8 +537,11 @@ class qt(QMainWindow, form_class):
 
 
     def load_years_set_date(self):
-        max_value = 0
         self.comboBox_year.clear()
+
+        mongodb_name = self.comboBox_db.currentData()
+        mongodb_data_col = mongodb_dict[mongodb_name]['data_col']
+
         # 년도 데이터 추출
         pipeline = [
             {"$group": {"_id": {"year": {"$year": "$timestamp"}}}},
@@ -537,27 +550,40 @@ class qt(QMainWindow, form_class):
         years = mongodb_data_col.aggregate(pipeline)
 
         for year in years:
-            max_value = max(max_value, year['_id']['year'])
+            print(type(year))
             self.comboBox_year.addItem(str(year['_id']['year']), year['_id']['year'])
 
+        # first time, no db data
+        if self.comboBox_year.count() == 0:
+            self.comboBox_year.clear()
+            self.comboBox_month.clear()
+            self.comboBox_day.clear()
+            self.curve_db_1_1.setData(np.array([]), np.array([]))
+            self.curve_db_2_1.setData(np.array([]), np.array([]))
+            return
+
         # set recent year
-        self.comboBox_year.setCurrentText(str(max_value))
+        self.comboBox_year.setCurrentIndex(self.comboBox_year.count() - 1)
 
         # set recent month
-        max_value = self.update_month_combobox()
-        self.comboBox_month.setCurrentText(str(max_value))
+        self.update_month_combobox()
+        self.comboBox_month.setCurrentIndex(self.comboBox_month.count() -1)
 
         # set recent day
-        max_value = self.update_day_combobox()
-        self.comboBox_day.setCurrentText(str(max_value))
+        self.update_day_combobox()
+        self.comboBox_day.setCurrentIndex(self.comboBox_day.count() -1)
 
+        # set db comboBox 
+        # self.comboBox_db.addItems(mongodb_list)
         self.check_data()
 
 
     def update_month_combobox(self):
-        max_value = 0
         self.comboBox_month.clear()
         selected_year = self.comboBox_year.currentData()
+
+        mongodb_name = self.comboBox_db.currentData()
+        mongodb_data_col = mongodb_dict[mongodb_name]['data_col']
 
         # 선택된 년도에 해당하는 월 데이터를 조회
         pipeline = [
@@ -568,16 +594,16 @@ class qt(QMainWindow, form_class):
         months = mongodb_data_col.aggregate(pipeline)
 
         for month in months:
-            max_value = max(max_value, month['_id']['month'])
             self.comboBox_month.addItem(str(month['_id']['month']), month['_id']['month'])
 
-        return max_value
 
     def update_day_combobox(self):
-        max_value = 0
         self.comboBox_day.clear()
         selected_year = self.comboBox_year.currentData()
         selected_month = self.comboBox_month.currentData()
+
+        mongodb_name = self.comboBox_db.currentData()
+        mongodb_data_col = mongodb_dict[mongodb_name]['data_col']
 
         # 선택된 년도와 월에 해당하는 일 데이터를 조회
         pipeline = [
@@ -593,10 +619,7 @@ class qt(QMainWindow, form_class):
         days = mongodb_data_col.aggregate(pipeline)
 
         for day in days:
-            max_value = max(max_value, day['_id']['day'])
             self.comboBox_day.addItem(str(day['_id']['day']), day['_id']['day'])
-
-        return max_value
 
 
     def check_data(self):
@@ -609,24 +632,39 @@ class qt(QMainWindow, form_class):
 
         start_date = datetime(year, month, day)
         end_date = datetime(year, month, day+1)
-        
-        results = mongodb_data_col.find({
-            'timestamp': {  # 'timestamp'는 날짜 및 시간 데이터를 저장하는 필드의 이름입니다.
-                '$gte': start_date,
-                '$lt': end_date
-            }
-        })
-        # self.db_data_1 = [np.nan] * PLOT_X_SIZE
-        self.data_to_plot(results, 'temp', self.curve_db_1_1)
 
-        results = mongodb_data_col.find({
+        mongodb_name = self.comboBox_db.currentData()
+        mongodb_data_col = mongodb_dict[mongodb_name]['data_col']
+        
+        results = list(mongodb_data_col.find({
             'timestamp': {  # 'timestamp'는 날짜 및 시간 데이터를 저장하는 필드의 이름입니다.
                 '$gte': start_date,
                 '$lt': end_date
             }
-        })
-        # self.db_data_2 = [np.nan] * PLOT_X_SIZE
+        }))
+        self.data_to_plot(results, 'temp', self.curve_db_1_1)
+        # self.data_to_plot(results, 'temp', self.curve[0][0][0])
+
         self.data_to_plot(results, 'humi', self.curve_db_2_1)
+        # self.data_to_plot(results, 'humi', self.curve[0][0][1])
+
+
+    def check_data_main(self):
+        start_date = datetime.now()
+        start_date = datetime(start_date.year, start_date.month, start_date.day)
+        end_date = datetime(start_date.year, start_date.month, start_date.day + 1)
+
+        for idx, mongodb_name in enumerate(mongodb_list):
+            mongodb_data_col = mongodb_dict[mongodb_name]['data_col']
+        
+            results = list(mongodb_data_col.find({
+                'timestamp': {  # 'timestamp'는 날짜 및 시간 데이터를 저장하는 필드의 이름입니다.
+                    '$gte': start_date,
+                    '$lt': end_date
+                }
+            }))
+            self.data_to_plot(results, 'temp', self.curve[int(idx/3)][int(idx%3)][0])
+            self.data_to_plot(results, 'humi', self.curve[int(idx/3)][int(idx%3)][1])
 
 
     def btn_34461a(self, button):
@@ -652,16 +690,30 @@ class qt(QMainWindow, form_class):
 def initMongoDB():
     global mongodb_signup_col
     global mongodb_data_col
+    global mongodb_list
+    global mongodb_dict
 
     if ENABLE_MONGODB:
         conn = pymongo.MongoClient('mongodb://' + server_ip,
                                    username=userid,
                                    password=passwd)
                                    # authSource=DEVICE_ID)
-
         db = conn.get_database(DEVICE_ID)
-        mongodb_signup_col = db.get_collection('signup')
         mongodb_data_col = db.get_collection('data')
+        mongodb_signup_col = db.get_collection('signup')
+
+        mongodb_list = conn.list_database_names()
+
+        for mongodb_db in mongodb_list:
+            db = conn.get_database(mongodb_db)
+            data_col = db.get_collection('data')
+            signup_col = db.get_collection('signup')
+
+            mongodb_dict[mongodb_db] = {
+                'db': db,
+                'data_col': data_col,
+                'signup_col': signup_col
+            }
 
 
 def run():

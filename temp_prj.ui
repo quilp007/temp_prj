@@ -75,7 +75,7 @@
     <enum>QTabWidget::Rounded</enum>
    </property>
    <property name="currentIndex">
-    <number>1</number>
+    <number>0</number>
    </property>
    <property name="iconSize">
     <size>
@@ -129,7 +129,7 @@
     <attribute name="title">
      <string>Main</string>
     </attribute>
-    <widget class="QLabel" name="label_195">
+    <widget class="QLabel" name="label_device">
      <property name="geometry">
       <rect>
        <x>1000</x>
@@ -476,6 +476,26 @@
      </property>
     </widget>
    </widget>
+   <widget class="QWidget" name="PC_Main">
+    <attribute name="icon">
+     <iconset>
+      <normaloff>icon/main_off.png</normaloff>
+      <normalon>icon/main_on.png</normalon>icon/main_off.png</iconset>
+    </attribute>
+    <attribute name="title">
+     <string>PC Main</string>
+    </attribute>
+    <widget class="GraphicsLayoutWidget" name="gW_pc_1" native="true">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>30</y>
+       <width>1231</width>
+       <height>561</height>
+      </rect>
+     </property>
+    </widget>
+   </widget>
    <widget class="QWidget" name="checkData">
     <attribute name="icon">
      <iconset>
@@ -508,21 +528,21 @@
     <widget class="QPushButton" name="btn_check_data">
      <property name="geometry">
       <rect>
-       <x>1050</x>
-       <y>150</y>
+       <x>1100</x>
+       <y>160</y>
        <width>141</width>
        <height>41</height>
       </rect>
      </property>
      <property name="text">
-      <string>START</string>
+      <string>RELOAD</string>
      </property>
     </widget>
     <widget class="QComboBox" name="comboBox_year">
      <property name="geometry">
       <rect>
        <x>1000</x>
-       <y>230</y>
+       <y>120</y>
        <width>81</width>
        <height>26</height>
       </rect>
@@ -532,7 +552,7 @@
      <property name="geometry">
       <rect>
        <x>1080</x>
-       <y>230</y>
+       <y>120</y>
        <width>81</width>
        <height>26</height>
       </rect>
@@ -542,8 +562,18 @@
      <property name="geometry">
       <rect>
        <x>1160</x>
-       <y>230</y>
+       <y>120</y>
        <width>81</width>
+       <height>26</height>
+      </rect>
+     </property>
+    </widget>
+    <widget class="QComboBox" name="comboBox_db">
+     <property name="geometry">
+      <rect>
+       <x>1080</x>
+       <y>40</y>
+       <width>161</width>
        <height>26</height>
       </rect>
      </property>
@@ -561,9 +591,9 @@
      <property name="geometry">
       <rect>
        <x>20</x>
-       <y>20</y>
+       <y>70</y>
        <width>1101</width>
-       <height>541</height>
+       <height>471</height>
       </rect>
      </property>
     </widget>
@@ -1146,6 +1176,36 @@
      </widget>
     </widget>
    </widget>
+  </widget>
+  <widget class="QLabel" name="label_196">
+   <property name="geometry">
+    <rect>
+     <x>1110</x>
+     <y>650</y>
+     <width>141</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <property name="font">
+    <font>
+     <family>Arial</family>
+     <pointsize>16</pointsize>
+     <weight>75</weight>
+     <bold>true</bold>
+    </font>
+   </property>
+   <property name="frameShape">
+    <enum>QFrame::Box</enum>
+   </property>
+   <property name="text">
+    <string>Temperature Inc.</string>
+   </property>
+   <property name="alignment">
+    <set>Qt::AlignCenter</set>
+   </property>
+   <property name="wordWrap">
+    <bool>true</bool>
+   </property>
   </widget>
  </widget>
  <customwidgets>
