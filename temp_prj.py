@@ -33,8 +33,13 @@ mqtt_port = 1883
 
 DEVICE_ID = 'temp_db_1'
 
+RASPBERRY_PI = True
 DEBUG_MODE = True
 PC_MODE = True
+
+if RASPBERRY_PI:
+    PC_MODE = False
+    DEBUG_MODE = False
 
 mongodb_signup_col = None
 mongodb_data_col = None
@@ -65,6 +70,9 @@ BAUD_RATE = 9600
 
 NUM_OF_GRAPH_ROW    = 2
 NUM_OF_GRAPH_COLUMN = 4
+
+if RASPBERRY_PI:
+    COM_PORT = '/dev/ttyACM0'
 
 # ------------------------------------------------------------------------------
 # TEST_DATA = True  # if read data from excel
