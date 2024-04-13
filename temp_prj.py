@@ -34,14 +34,6 @@ mqtt_port = 1883
 
 DEVICE_ID = 'temp_db_1'
 
-RASPBERRY_PI = True
-DEBUG_MODE = True
-PC_MODE = True
-
-if RASPBERRY_PI:
-    PC_MODE = False
-    DEBUG_MODE = False
-
 mongodb_signup_col = None
 mongodb_data_col = None
 mongodb_list = None
@@ -55,13 +47,18 @@ DEVICE_ID = 'temp_db_5'
 
 # MODE config
 # debug mode: display all tabs
-DEBUG_MODE = False
+DEBUG_MODE = True
 
 # pc mode: 
 # 1. display monitoring tab, check data tab 
 # 2. not receive serial data (disable)
 # True: PC mode, False: raspberry pi mode
-PC_MODE = True
+PC_MODE = False
+
+RASPBERRY_PI = False    # change serial port
+if RASPBERRY_PI == True:
+    PC_MODE = False
+    DEBUG_MODE = False
 
 # use global variable!!!!!!!!!!!!!!!
 USE_GLOBAL_VARIABLE = False
