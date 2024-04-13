@@ -75,7 +75,7 @@
     <enum>QTabWidget::Rounded</enum>
    </property>
    <property name="currentIndex">
-    <number>0</number>
+    <number>2</number>
    </property>
    <property name="iconSize">
     <size>
@@ -426,19 +426,6 @@
       </property>
      </widget>
     </widget>
-    <widget class="QPushButton" name="btn_close">
-     <property name="geometry">
-      <rect>
-       <x>1060</x>
-       <y>380</y>
-       <width>141</width>
-       <height>41</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>CLOSE</string>
-     </property>
-    </widget>
     <widget class="GraphicsLayoutWidget" name="graphWidget" native="true">
      <property name="geometry">
       <rect>
@@ -447,32 +434,6 @@
        <width>961</width>
        <height>281</height>
       </rect>
-     </property>
-    </widget>
-    <widget class="QPushButton" name="btn_stop">
-     <property name="geometry">
-      <rect>
-       <x>1060</x>
-       <y>320</y>
-       <width>141</width>
-       <height>41</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>STOP</string>
-     </property>
-    </widget>
-    <widget class="QPushButton" name="btn_start">
-     <property name="geometry">
-      <rect>
-       <x>1060</x>
-       <y>260</y>
-       <width>141</width>
-       <height>41</height>
-      </rect>
-     </property>
-     <property name="text">
-      <string>START</string>
      </property>
     </widget>
    </widget>
@@ -576,6 +537,19 @@
        <width>161</width>
        <height>26</height>
       </rect>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="btn_excel">
+     <property name="geometry">
+      <rect>
+       <x>1100</x>
+       <y>210</y>
+       <width>141</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>Excel</string>
      </property>
     </widget>
    </widget>

@@ -9,7 +9,7 @@ from PyQt5 import uic, QtCore
 
 import numpy as np
 import shelve
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import pyqtgraph as pg
 
@@ -22,6 +22,7 @@ import pymongo
 # config -----------------------------------------------------------------------
 # ------------------------------------------------------------------------------
 
+# MongoDB config
 ENABLE_MONGODB = True
 server_ip = '211.57.90.83'
 
@@ -31,57 +32,63 @@ passwd = 'temp!'
 mongo_port = 27017
 mqtt_port = 1883
 
-DEVICE_ID = 'temp_db_1'
-
-DEBUG_MODE = True
-PC_MODE = True
-
 mongodb_signup_col = None
 mongodb_data_col = None
 mongodb_list = None
 mongodb_dict = {}
 
-SAVE_PERIOD = 60 * 2 * 1000   # second
+DIR_CHECK_DATA = './output/check_data/'
+DIR_AUTO_DATA = './output/auto_data/'
 
-# graph x size
-PLOT_X_SIZE = 720 + 1  # graph's x size
-x_size = 200  # graph's x size
+# must be match DEVICE_ID and DB NAME
+DEVICE_ID = 'temp_db_5'
+
+# MODE config
+# debug mode: display all tabs
+DEBUG_MODE = False
+
+# pc mode: 
+# 1. display monitoring tab, check data tab 
+# 2. not receive serial data (disable)
+# True: PC mode, False: raspberry pi mode
+PC_MODE = True
 
 # use global variable!!!!!!!!!!!!!!!
 USE_GLOBAL_VARIABLE = False
 # USE_GLOBAL_VARIABLE = True
 
+# serial config
+# COM_PORT = 'com4'
+COM_PORT = '/dev/tty.usbmodem1412301'
+BAUD_RATE = 9600
+
+if not PC_MODE:
+    serialDev = serial.Serial(COM_PORT, BAUD_RATE)
+
+# graph config
 TEMP_PLOT_UPPER = 30 
 TEMP_PLOT_LOWER = 15 
 
 HUMI_PLOT_UPPER = 40
 HUMI_PLOT_LOWER = 0 
 
-
-# serial config
-# COM_PORT = 'com4'
-COM_PORT = '/dev/tty.usbmodem141301'
-BAUD_RATE = 9600
-
 NUM_OF_GRAPH_ROW    = 2
 NUM_OF_GRAPH_COLUMN = 4
 
-# ------------------------------------------------------------------------------
-# TEST_DATA = True  # if read data from excel
-TEST_DATA = False # if read data from 34461a
+# graph x size
+PLOT_X_SIZE = 720 + 1  # graph's x size
 
-if not TEST_DATA:
-    serialDev = serial.Serial(COM_PORT, BAUD_RATE)
+# time to save data to mongodb, display monitoring graph
+SAVE_PERIOD = 60 * 2 * 1000   # second
+
 
 form_class = uic.loadUiType('temp_prj.ui')[0]
-
 
 # --------------------------------------------------------------
 # [THREAD] RECEIVE from PLC (receive from PLC)
 # --------------------------------------------------------------
 class THREAD_RECEIVE_Data(QThread):
     intReady = pyqtSignal(float, float)
-    to_excel = pyqtSignal(str, float)
     intPlot  = pyqtSignal()
 
     @pyqtSlot()
@@ -91,14 +98,10 @@ class THREAD_RECEIVE_Data(QThread):
 
         self.__suspend = False
         self.__exit = False
-        self.log_flag = False
 
         self.temp =15 
         self.humi =15 
         self._time = 0
-
-        self.temp_list = []
-        self.humi_list = []
 
         self.timer_ = QtCore.QTimer()
         self.timer_.setInterval(SAVE_PERIOD)
@@ -107,7 +110,8 @@ class THREAD_RECEIVE_Data(QThread):
 
 
     def timeout_func(self):
-        mongodb_data_col.insert_one({'timestamp': self._time, 'temp': self.temp, 'humi': self.humi})
+        if not PC_MODE:
+            mongodb_data_col.insert_one({'timestamp': self._time, 'temp': self.temp, 'humi': self.humi})
         self.intPlot.emit()
 
 
@@ -117,35 +121,31 @@ class THREAD_RECEIVE_Data(QThread):
             while self.__suspend:
                 time.sleep(0.5)
 
-            rawserial = serialDev.readline()
-            cookedserial = rawserial.decode('utf-8').strip('\r\n')
-            try:
-                jsonData = json.loads(cookedserial)
-            except Exception as e:
-                print(f'error: {e}')
-                continue
+            if not PC_MODE:
+                rawserial = serialDev.readline()
+                cookedserial = rawserial.decode('utf-8').strip('\r\n')
+                try:
+                    jsonData = json.loads(cookedserial)
+                except Exception as e:
+                    print(f'error: {e}')
+                    continue
 
-            print(jsonData)
-            temp = jsonData['Temperature']
-            humi = jsonData['Humidity']
-            print(f'Humidity: {humi}')
-            print('Temperature: ', temp)
+                print(jsonData)
+                temp = jsonData['Temperature']
+                humi = jsonData['Humidity']
+                print(f'Humidity: {humi}')
+                print('Temperature: ', temp)
 
-            self.temp_list.append(temp)
-            self.humi_list.append(humi)
+                self.temp = temp
+                self.humi = humi
 
-            self.temp = temp
-            self.humi = humi
+                self._time = datetime.now()
+                _time_str = self._time.strftime(self.time_format)
 
-            self._time = datetime.now()
-            _time_str = self._time.strftime(self.time_format)
-
-            # read = RES_REF
-            print(f'{_time_str} > temp: {self.temp}  humi: {self.humi}')
-            self.intReady.emit(self.temp, self.humi)
-
-            if self.log_flag:
-                self.to_excel.emit(self._time, read)
+                print(f'{_time_str} > temp: {self.temp}  humi: {self.humi}')
+                self.intReady.emit(self.temp, self.humi)
+            else:
+                time.sleep(1)
 
             ### Exit ###
             if self.__exit:
@@ -206,17 +206,9 @@ class qt(QMainWindow, form_class):
         self.clickable(self.lcdNum_error_limit).connect(lambda: self.input_lcdNum(self.lcdNum_error_limit))
         self.clickable(self.label_mode).connect(self.mode_change)
 
-        self.btn_start.clicked.connect(lambda: self.btn_34461a(self.btn_start))
-        self.btn_stop.clicked.connect(lambda: self.btn_34461a(self.btn_stop))
-        self.btn_close.clicked.connect(lambda: self.btn_34461a(self.btn_close))
-
         self.btn_check_data.clicked.connect(self.check_data)
+        self.btn_excel.clicked.connect(self.save_data_to_excel)
 
-        self.data = np.linspace(-np.pi, np.pi, x_size)
-        self.y1_1 = np.zeros(len(self.data))
-        self.y1_2 = np.zeros(len(self.data))
-
-        # self.y2_1 = np.sin(self.data)
         self.y2_1 = [np.nan] * PLOT_X_SIZE
         self.y2_2 = [np.nan] * PLOT_X_SIZE
 
@@ -230,6 +222,10 @@ class qt(QMainWindow, form_class):
         self.current_row = 0
         
         self.CLEAR_FLAG = False
+
+        # for MongoDB data
+        self.results_check_data = []
+        self.results_name = None
 
         #----------------- Humidity Plot
         axis = CustomAxis(orientation='bottom')
@@ -257,7 +253,7 @@ class qt(QMainWindow, form_class):
         axis.setTickSpacing(major=30, minor=30)
         self.p7.showGrid(x=True, y=True, alpha=0.5)
 
-        #----------------- DB data -> Temperature Plot
+        #----------------- [데이터 확인] DB data -> Temperature Plot
         axis = CustomAxis(orientation='bottom')
         self.db_plot_1 = self.graphWidget_4.addPlot(title="DB Temperature", axisItems={'bottom': axis})
         self.curve_db_1_1 = self.db_plot_1.plot(pen='r')
@@ -269,7 +265,7 @@ class qt(QMainWindow, form_class):
         axis.setTickSpacing(major=30, minor=30)
         self.db_plot_1.showGrid(x=True, y=True, alpha=0.5)
 
-        #----------------- DB data -> Humidity Plot
+        #----------------- [데이터 확인] DB data -> Humidity Plot
         axis = CustomAxis(orientation='bottom')
         self.db_plot_2 = self.graphWidget_5.addPlot(title="DB Humidity", axisItems={'bottom': axis})
         self.curve_db_2_1 = self.db_plot_2.plot(pen='g')
@@ -323,13 +319,7 @@ class qt(QMainWindow, form_class):
         self.thread_rcv_data = THREAD_RECEIVE_Data()
         self.thread_rcv_data.intReady.connect(self.update_func)
         self.thread_rcv_data.intPlot.connect(self.check_data_main)
-        self.thread_rcv_data.to_excel.connect(self.to_excel_func)
         self.thread_rcv_data.start()
-
-        self.resist_data = []
-        # self.writer = pd.ExcelWriter('./data.xlsx')
-
-        self.log_flag = False
 
         self.measure_mode = True    # resistance mode
 
@@ -458,18 +448,6 @@ class qt(QMainWindow, form_class):
             lcdNum.display(text)
 
 
-    def drawLine(self, plot_name, val, color):
-        line = pg.InfiniteLine(angle=0, movable=True, pen=color)
-        line.setValue(val)
-        plot_name.addItem(line, ignoreBounds=True)
-
-
-    def to_excel_func(self, _time, data):
-        tt = [_time, data]
-        self.resist_data.append(tt)
-        print(tt)
-
-
     def insert_log(self, temp, humi):
         time_text = time.strftime('%y.%m.%d_%H:%M:%S', time.localtime(time.time()))
         log_text = time_text + '   ' + str(temp) + '°C' + '   ' + str(humi) + '%'
@@ -500,19 +478,23 @@ class qt(QMainWindow, form_class):
 
 
     def mean_value_plot(self, temp_value, humi_value):
-        hour = datetime.now().hour
-        min = datetime.now().minute
+        today = datetime.now()
+        hour = today.hour
+        min = today.minute
 
         if hour == 0:
             if min < 1 and self.CLEAR_FLAG == False:
                 self.y2_1 = [np.nan] * PLOT_X_SIZE
                 self.y2_2 = [np.nan] * PLOT_X_SIZE
 
+                day_before = today - timedelta(days=1)
+                self.check_data(day_before.year, day_before.month, day_before.day)
+                self.save_data_to_excel()
+
                 self.CLEAR_FLAG = True
 
             if min == 1:
                 self.CLEAR_FLAG = False
-
 
 
         position = int(hour * 30 + min / 2)
@@ -628,28 +610,36 @@ class qt(QMainWindow, form_class):
             self.comboBox_day.addItem(str(day['_id']['day']), day['_id']['day'])
 
 
-    def check_data(self):
-        # start_date = datetime(2024, 4, 7)
-        # end_date = datetime(2024, 4, 8)
+    # [데이터 확인]
+    def check_data(self, year=None, month=None, day=None):
+        display_flag = False
+        if day==None:
+            display_flag = True
 
-        year    = self.comboBox_year.currentData()
-        month   = self.comboBox_month.currentData()
-        day     = self.comboBox_day.currentData()
+        if display_flag:
+            year    = self.comboBox_year.currentData()
+            month   = self.comboBox_month.currentData()
+            day     = self.comboBox_day.currentData()
 
         start_date = datetime(year, month, day)
         end_date = datetime(year, month, day+1)
 
         mongodb_name = self.comboBox_db.currentData()
         mongodb_data_col = mongodb_dict[mongodb_name]['data_col']
+
+        self.results_name = "{}_{}_{}_{}".format(mongodb_name, year, month, day)
         
-        results = list(mongodb_data_col.find({
+        self.results_check_data.clear()
+        self.results_check_data = list(mongodb_data_col.find({
             'timestamp': {  # 'timestamp'는 날짜 및 시간 데이터를 저장하는 필드의 이름입니다.
                 '$gte': start_date,
                 '$lt': end_date
             }
         }))
-        self.data_to_plot(results, 'temp', self.curve_db_1_1)
-        self.data_to_plot(results, 'humi', self.curve_db_2_1)
+
+        if display_flag:
+            self.data_to_plot(self.results_check_data, 'temp', self.curve_db_1_1)
+            self.data_to_plot(self.results_check_data, 'humi', self.curve_db_2_1)
 
 
     def check_data_main(self):
@@ -670,24 +660,11 @@ class qt(QMainWindow, form_class):
             self.data_to_plot(results, 'humi', self.curve[int(idx/NUM_OF_GRAPH_COLUMN)][int(idx%NUM_OF_GRAPH_COLUMN)][1])
 
 
-    def btn_34461a(self, button):
-        if button == self.btn_start:
-            self.thread_rcv_data.myResume()
-            self.thread_rcv_data.log_flag = True
-        elif button == self.btn_stop:
-            self.thread_rcv_data.log_flag = False
-            # self.thread_rcv_data.mySuspend()
-            df1 = pd.DataFrame(self.resist_data)
-            _time = datetime.now()
-            _time = _time.strftime(self.thread_rcv_data.time_format)
+    def save_data_to_excel(self, name = None, data = None):
+        df = pd.DataFrame(self.results_check_data)
+        df = df.drop(columns=['_id'])
 
-            with pd.ExcelWriter(_time + '.xlsx') as writer:
-                df1.to_excel(writer, _time + '.xlsx')
-
-            self.resist_data = []
-
-        elif button == self.btn_close:
-            self.thread_rcv_data.close()
+        df.to_csv(DIR_CHECK_DATA + self.results_name+'.csv', index=False, header=True)
 
 
 def initMongoDB():
@@ -718,6 +695,15 @@ def initMongoDB():
                 'signup_col': signup_col
             }
 
+def check_directory():
+    dir_path = [DIR_AUTO_DATA, DIR_CHECK_DATA]
+
+    for dir in dir_path:
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+            print(f"Directory '{dir}' was created.")
+        else:
+            print(f"Directory '{dir}' already exists.")
 
 def run():
     app = QApplication(sys.argv)
@@ -729,4 +715,5 @@ def run():
 
 if __name__ == "__main__":
     initMongoDB()
+    check_directory()
     run()
