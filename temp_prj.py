@@ -66,7 +66,10 @@ USE_GLOBAL_VARIABLE = False
 
 # serial config
 # COM_PORT = 'com4'
-COM_PORT = '/dev/tty.usbmodem1412301'
+if RASPBERRY_PI:
+    COM_PORT = '/dev/ttyACM0'
+else:
+    COM_PORT = '/dev/tty.usbmodem1412301'
 BAUD_RATE = 9600
 
 if not PC_MODE:
@@ -87,8 +90,6 @@ PLOT_X_SIZE = 720 + 1  # graph's x size
 
 # time to save data to mongodb, display monitoring graph
 SAVE_PERIOD = 60 * 2 * 1000   # second
-if RASPBERRY_PI:
-    COM_PORT = '/dev/ttyACM0'
 
 # ------------------------------------------------------------------------------
 # TEST_DATA = True  # if read data from excel
