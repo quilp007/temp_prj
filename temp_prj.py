@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pyqtgraph as pg
 
+import threading
 import time
 import serial
 import json
@@ -32,7 +33,8 @@ passwd = 'temp!'
 mongo_port = 27017
 mqtt_port = 1883
 
-DEVICE_ID = 'temp_db_1'
+# must be match DEVICE_ID and DB NAME
+DEVICE_ID = 'temp_db_5'
 
 mongodb_signup_col = None
 mongodb_data_col = None
@@ -42,8 +44,7 @@ mongodb_dict = {}
 DIR_CHECK_DATA = './output/check_data/'
 DIR_AUTO_DATA = './output/auto_data/'
 
-# must be match DEVICE_ID and DB NAME
-DEVICE_ID = 'temp_db_5'
+
 
 # MODE config
 # debug mode: display all tabs
@@ -52,10 +53,12 @@ DEBUG_MODE = True
 # pc mode: 
 # 1. display monitoring tab, check data tab 
 # 2. not receive serial data (disable)
+# 3. not send temp. data to db server
 # True: PC mode, False: raspberry pi mode
 PC_MODE = False
 
 RASPBERRY_PI = False    # change serial port
+NO_DISPLAY = True
 if RASPBERRY_PI == True:
     PC_MODE = False
     DEBUG_MODE = False
@@ -117,16 +120,22 @@ class THREAD_RECEIVE_Data(QThread):
         self.humi =15 
         self._time = 0
 
-        self.timer_ = QtCore.QTimer()
-        self.timer_.setInterval(SAVE_PERIOD)
-        self.timer_.timeout.connect(self.timeout_func)
-        self.timer_.start()
+        # self.timer_ = QtCore.QTimer()
+        # self.timer_.setInterval(SAVE_PERIOD)
+        # self.timer_.timeout.connect(self.timeout_func)
+        # self.timer_.start()
+
+        self.timeout_func()
 
 
     def timeout_func(self):
         if not PC_MODE:
             mongodb_data_col.insert_one({'timestamp': self._time, 'temp': self.temp, 'humi': self.humi})
-        self.intPlot.emit()
+
+        if not NO_DISPLAY:
+            self.intPlot.emit()
+
+        threading.Timer(SAVE_PERIOD/1000, self.timeout_func).start()
 
 
     def run(self):
@@ -157,7 +166,9 @@ class THREAD_RECEIVE_Data(QThread):
                 _time_str = self._time.strftime(self.time_format)
 
                 print(f'{_time_str} > temp: {self.temp}  humi: {self.humi}')
-                self.intReady.emit(self.temp, self.humi)
+
+                if not NO_DISPLAY:
+                    self.intReady.emit(self.temp, self.humi)
             else:
                 time.sleep(1)
 
@@ -577,7 +588,7 @@ class qt(QMainWindow, form_class):
 
         # set db comboBox 
         # self.comboBox_db.addItems(mongodb_list)
-        self.check_data()
+        self.check_data(None, None, None)
 
 
     def update_month_combobox(self):
@@ -720,11 +731,15 @@ def check_directory():
             print(f"Directory '{dir}' already exists.")
 
 def run():
-    app = QApplication(sys.argv)
-    widget = qt()
-    widget.show()
+    if not NO_DISPLAY:
+        app = QApplication(sys.argv)
+        widget = qt()
+        widget.show()
 
-    sys.exit(app.exec_())
+        sys.exit(app.exec_())
+    else:
+        thread_rcv_data = THREAD_RECEIVE_Data()
+        thread_rcv_data.start()
 
 
 if __name__ == "__main__":
