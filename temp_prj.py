@@ -32,6 +32,16 @@ passwd = 'temp!'
 mongo_port = 27017
 mqtt_port = 1883
 
+DEVICE_ID = 'temp_db_1'
+
+RASPBERRY_PI = True
+DEBUG_MODE = True
+PC_MODE = True
+
+if RASPBERRY_PI:
+    PC_MODE = False
+    DEBUG_MODE = False
+
 mongodb_signup_col = None
 mongodb_data_col = None
 mongodb_list = None
@@ -80,6 +90,12 @@ PLOT_X_SIZE = 720 + 1  # graph's x size
 
 # time to save data to mongodb, display monitoring graph
 SAVE_PERIOD = 60 * 2 * 1000   # second
+if RASPBERRY_PI:
+    COM_PORT = '/dev/ttyACM0'
+
+# ------------------------------------------------------------------------------
+# TEST_DATA = True  # if read data from excel
+TEST_DATA = False # if read data from 34461a
 
 
 form_class = uic.loadUiType('temp_prj.ui')[0]
